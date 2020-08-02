@@ -1,0 +1,1102 @@
+import Send.PacketQueue;
+import Send.PacketReciever;
+import Send.PacketSender;
+import java.awt.*;
+import java.awt.event.*;
+import java.io.*;
+import java.lang.*;
+import java.util.*;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.swing.*;
+
+interface GUIKonstants {
+
+	public static final int SBQPROTOCOL		= 1000;
+	public static final int CLEARPROTOCOL   = 1002;
+
+	public static final int ADDNODE			= 2000;
+	public static final int SENDPACKET		= 2001;
+	public static final int SELECT          = 2002;
+    public static final int DELETE          = 2003;
+    public static final int LOADNODES		= 2004;
+    public static final int SHOWATTACK      = 2005;
+    public static final int SEND      = 2006;
+    
+    
+    public static final int SHOWTABLE       = 3000;
+    public static final int SENDER	        = 3001;
+    public static final int DESTINATION     = 3002;
+    public static final int MOVENODE        = 3003;
+
+    public static final int XDISP			= 0;
+    public static final int YDISP			= 30;
+
+    public static final int WIDTHSIM        = 500;
+    public static final int HEIGHTSIM       = 500;
+
+    public static final int WIDTHBUTTON     = 100;
+    public static final int HEIGHTBUTTON    = 20;
+
+	public static final int packetnum = 2;
+
+}
+
+class GUIDemo extends JFrame implements WindowListener, ActionListener, MouseListener, MouseMotionListener, GUIKonstants, ScheduleListener
+{
+	public JTextArea commandText;
+	public int nodeNum;
+	public JCanvas JC;
+	public GridBagLayout gridbag;
+	public GridBagConstraints constraints;
+
+	public String fname = "test1";
+
+	private Scheduler mySched;
+	private nodeProperties GUIsender = null;
+	private nodeProperties GUIdestination = null;
+	private nodeProperties activeSender = null;
+
+	int rate = 50;
+	int movementTimeInterval = 300;
+	int mouseX, mouseY;
+	int previousDest	= -1;
+	int previousSender	= -1;
+	int previousSelect	= 0;
+	int movingNode	= -1;
+
+	int ProtocolNum = SBQPROTOCOL;
+	int function = ADDNODE;
+	Hashtable nodeRef = new Hashtable();
+
+	boolean isMoving = false; 
+
+	JButton nbutton5;
+	JToggleButton sbutton1, sbutton2, sbutton3, sbutton4;
+	JToggleButton nbutton1, nbutton2, nbutton3, nbutton4,nbutton6,nbutton7;
+	JToggleButton pbutton3;
+	
+	JPanel p;
+
+	java.util.Timer schedTimer, updateTimer, simTimer, nodeTimer; 
+
+	public GUIDemo (String [] args) 
+	{
+		super("" +
+"Clustering Algorithm");
+		if (args.length > 0) fname = args[0];
+	
+		setupSimulation();
+		setBackground(SystemColor.control);
+		mySched.addScheduleListener(this);
+		addWindowListener(this);
+	
+		// Contents Pane
+		JC = new JCanvas(nodeRef, XDISP, YDISP);
+		JPanel pcanvas = new JPanel();
+		pcanvas.setLayout(new GridLayout(1,1));
+		pcanvas.add(JC);
+	
+		// Add event listeners
+	    addMouseMotionListener(this);
+	    addMouseListener(this);
+	
+		// Add peripherals
+	    p = new JPanel();
+	    p.setLayout(new GridLayout(14, 1));
+	
+	    JPanel panel = new JPanel();
+	    panel.setLayout(new BorderLayout());
+	    panel.add(pcanvas, BorderLayout.WEST);
+	    panel.add(p, BorderLayout.EAST);
+	    getContentPane().add(panel);
+	
+	    protocolButtons();
+	
+	    nodeButtons();
+	
+		p.add(pbutton3);
+		
+		p.add(nbutton1); 
+		p.add(nbutton2);
+		 
+		
+		p.add(nbutton4); 
+		p.add(nbutton6);
+                p.add(nbutton7);
+		p.add(nbutton3);
+		
+		p.add(sbutton1); 
+		p.add(sbutton2); 
+		p.add(sbutton3); 
+		p.add(sbutton4);	
+		p.add(nbutton5);
+	
+	    pack();
+	    setVisible(true);
+	}
+
+    public void loadFile() 
+    {
+	    int i = 0;
+	    try {
+		    BufferedReader InFile = new BufferedReader( new FileReader(fname));
+		    String Lines = InFile.readLine();
+		    int x, y;
+		    while (Lines != null) {
+	      	StringTokenizer s = new StringTokenizer(Lines);
+	
+			Integer Int = new Integer(s.nextToken());
+			x = Int.intValue();
+			Int = new Integer(s.nextToken());
+			y = Int.intValue();
+	
+			addNode(x,y);
+			if (i == 0) setSender(x,y);
+			else setDest(x,y);
+			i++;
+	      	Lines = InFile.readLine();
+		    }
+		    InFile.close();
+	    } catch (FileNotFoundException e) { 
+	    } catch (IOException e) {
+	    }
+
+		// set nodes to mobile
+		isMoving = true;
+	
+		simTimer = new java.util.Timer();
+		int delay = 1000;   		// delay for 1 sec.
+		final int period = 1000;  	// repeat every sec.
+		simTimer.scheduleAtFixedRate(new TimerTask() {
+			int num = 0;
+
+	        public void run() {
+				System.out.println("testnum = " + num);
+					num++;
+				if (GUIsender != null & GUIdestination != null) {
+					GUIsender.getNode().send(GUIdestination.getNode().getAddr(), 1000, "This is just a normal data packet");
+				} else {
+					return;	
+				}
+	
+				if (num >= packetnum) { 
+					this.cancel();
+					JOptionPane.showMessageDialog(null, "Completed simulation (sent "+packetnum+" packets).",
+						"Simulator", JOptionPane.INFORMATION_MESSAGE);				
+					isMoving = false;
+				}
+			}
+	    }, delay, period);
+	}
+
+	public void buildConstraints (GridBagConstraints constraints, int gx,
+	    int gy, int gw, int gh, int wx, int wy) 
+	{
+	    constraints.gridx = gx;
+	    constraints.gridy = gy;
+	    constraints.gridwidth = gw;
+	    constraints.gridheight= gh;
+	    constraints.weightx = wx;
+	    constraints.weighty = wy;
+	}
+
+	public void addTextBox() {
+	    buildConstraints(constraints, 0, HEIGHTSIM+HEIGHTBUTTON*2,
+                WIDTHBUTTON,HEIGHTBUTTON,100,10);
+    	commandText = new JTextArea("hello everyone!", WIDTHSIM, 1);
+    	getContentPane().add(commandText, constraints);
+	}
+
+	public void actionPerformed(ActionEvent e) 
+	{
+	    int response = JOptionPane.YES_OPTION;
+    	int cmdval = 0;
+
+	    switch((cmdval=(new Integer(e.getActionCommand())).intValue())) {
+
+	    case SBQPROTOCOL:
+	 	        if (ProtocolNum != cmdval & nodeRef.size() > 0) {
+	            response = JOptionPane.showConfirmDialog(null,
+	                "This will delete all prior information",
+	                "Confirm Restart",
+	                JOptionPane.YES_NO_OPTION);
+	            }
+	        if (response == JOptionPane.YES_OPTION) {
+	            clear();
+			    disableSelectButtons();
+	            System.out.println("changing protocol to "+cmdval);
+	            ProtocolNum = cmdval;
+	            switchProtocol(ProtocolNum);
+	        }
+	        break;
+	
+	    case CLEARPROTOCOL:
+	        clear();
+	        disableSelectButtons();
+			System.out.println("Resetting simulator and clearing nodes.");
+			break;
+	
+		case ADDNODE:
+	        	function = ADDNODE;
+		        disableSelectButtons();
+	        	System.out.println("Adding node.");
+			break;
+	
+		case LOADNODES:
+			loadFile();
+			break;
+	
+		case SENDPACKET:
+	        function = SENDPACKET;
+			previousSelect = SENDPACKET;
+			System.out.println("Sending packet.");
+	//JOptionPane.showMessageDialog(rootPane,"Message Send SuccesFully");
+		
+			if (GUIsender != null & GUIdestination != null) {
+				GUIsender.getNode().send(GUIdestination.getNode().getAddr(), 2000, "This is just a normal data packet");
+				  disableSelectButtons();
+			JOptionPane.showMessageDialog(rootPane,"Message Send SuccesFully");
+			  
+                        }
+			else
+				JOptionPane.showMessageDialog(null, "Select Sender and Destinstion first");   
+		 // JOptionPane.showMessageDialog(rootPane,"Message Send SuccesFully");
+			break;
+	
+		case SHOWATTACK:
+	      /*  function = SENDPACKET;
+			previousSelect = SENDPACKET;
+			System.out.println("Show Attack.");
+	
+			if (GUIsender != null & GUIdestination != null) {
+				GUIsender.getNode().send(GUIsender.getNode().getAddr(), 2000, "This is a attack data packet");
+				disableSelectButtons();
+				try {
+					Thread.sleep(2000);
+				} catch (InterruptedException e1) {
+					// TODO Auto-generated catch block
+					e1.printStackTrace();
+				}
+				//JOptionPane.showMessageDialog(null, "Message not send due to attack");   
+				  
+			}
+			else
+			{
+				JOptionPane.showMessageDialog(null, "Select Sender and Destinstion first");   
+			}
+		    
+		    */
+                    /*Attacks ob=new Attacks();
+                    ob.setVisible(true);
+			break;*/
+                    Upload ob=new Upload();
+                    ob.setVisible(true);
+                    break;
+                    
+			case SEND:
+                           /* new PacketQueue();
+                            PacketSender ob1=new PacketSender();
+                            ob1.main(null);
+                            PacketReciever ob2=new PacketReciever();
+                            ob2.main(null);*/
+                            JOptionPane.showMessageDialog(rootPane,"run queue , sender and receiver");
+                           break;
+		case SELECT:
+	        function = previousSelect;
+	       	System.out.println("selection");
+			if (nodeRef.size() > 0) {
+	        	enableSelectButtons();
+			}
+	        break;
+	
+	 	case DELETE:
+			function = DELETE;
+	        disableSelectButtons();
+			break;
+	
+	 	case SHOWTABLE:
+	       	function = SHOWTABLE;
+			previousSelect = SHOWTABLE;
+	        break;
+	
+		case SENDER:
+			function = SENDER;
+			previousSelect = SENDER;
+			break;
+	
+		case DESTINATION:
+			function = DESTINATION;
+			previousSelect = DESTINATION;
+			break;
+	
+		case MOVENODE:
+			function = MOVENODE;
+			previousSelect = MOVENODE;
+			break;
+	
+		default:
+			System.out.println("hello "+e.getActionCommand());
+			break;
+	    }
+	    
+	    pack();
+	    setVisible(true);
+	}
+
+/**********************************************************************************
+these functions are for interfacing with scheduler
+**********************************************************************************/
+	public void switchProtocol(int protocolNum) 
+	{
+  		switch(protocolNum) {
+		case SBQPROTOCOL: Node.setProtocol(new SBQProtocol() ); break;
+	
+ 		}
+	}
+
+	public void setupSimulation() 
+	{
+    	mySched = new Scheduler(new FreeSpacePropagation());
+		switchProtocol(ProtocolNum);
+  	}
+
+  	public void run() 
+  	{
+		schedTimer = new java.util.Timer();
+		int delay = 1;   		// delay for 1 sec.
+		final int period = 1;  	// repeat every sec.
+
+		schedTimer.scheduleAtFixedRate(new TimerTask() 
+		{
+	        public void run() 
+	        {
+				mySched.run((double)period);
+				JC.repaint();
+			}
+	    }, delay, period);
+	
+	    final Random r = new Random();
+	    r.setSeed(100);
+
+		updateTimer = new java.util.Timer();
+
+		int delay2 = 3000;   // delay for 3 sec.
+		final int period2 = movementTimeInterval;  // repeat every 3 sec. -> mobilty rate
+
+		updateTimer.scheduleAtFixedRate(new TimerTask() 
+		{
+	       	public void run() 
+	       	{
+			    nodeProperties np;
+			    Iterator itr = nodeRef.values().iterator();
+			    
+			    if (isMoving == false) return; 
+		    	while (itr.hasNext()) {
+					np = (nodeProperties) itr.next();
+					int dir = r.nextInt()%5;
+					int x,y;
+					x = np.getX();
+					y = np.getY();
+					switch(dir) {
+					case 1:	
+						x = x + rate;
+						if (x >= WIDTHSIM-20) {
+							x = WIDTHSIM-rate;
+						}
+						break;
+					
+					case 4: 
+						x  = x - rate;
+						if (x <= 20) {
+							x = rate;
+						}
+						break;
+					
+					case 2: 
+						y = y + rate;
+						if (y >= HEIGHTSIM-20) {
+							y = HEIGHTSIM-rate;
+						}
+						break;
+					
+					case 3: 
+						y = y - rate;
+						if (y <= 20) {
+							y = rate;
+						}
+						break;
+					
+					case 0:
+						break;
+					}
+					np.setDesiredLocation(x, y);
+				}
+				
+				JC.repaint();
+	        }
+		}, delay2, period2);
+
+	}
+
+	public int searchNode(int mouseX, int mouseY) 
+	{
+    	int i, addr =-1, dist, shortest=10000000;
+    	nodeProperties np;
+
+		Iterator itr = nodeRef.values().iterator();
+    	while (itr.hasNext()) {
+			np = (nodeProperties) itr.next();
+ 	    	dist = (int) np.getNode().getLocation().getDistance((double) mouseX/2, (double) mouseY/2);
+        	
+        	if (dist < shortest) {
+           		addr = np.getNode().getAddr();
+           		shortest = dist;
+        	}	
+		}
+    	return addr;
+  	}
+
+/**********************************************************************************
+these functions are the button functions
+**********************************************************************************/
+	
+	
+	public void protocolButtons() 
+	{
+	    pbutton3 = new JToggleButton("Clear",false);
+	    pbutton3.addActionListener(this);
+	    pbutton3.setActionCommand((new String(CLEARPROTOCOL+" ")).trim());
+	
+	    ButtonGroup protocolButtonGroup = new ButtonGroup();
+	    protocolButtonGroup.add(pbutton3);
+	}
+
+	public void nodeButtons() 
+	{
+	    nbutton1 = new JToggleButton("Add Node",true);
+	    nbutton1.addActionListener(this);
+	    nbutton1.setActionCommand((new String(ADDNODE+" ")).trim());
+	
+	    nbutton2 = new JToggleButton("Send Packet",false);
+	    nbutton2.addActionListener(this);
+	    nbutton2.setActionCommand((new String(SENDPACKET+" ")).trim());
+	
+	    nbutton3 = new JToggleButton("Select",false);
+	    nbutton3.addActionListener(this);
+	    nbutton3.setActionCommand((new String(SELECT+" ")).trim());
+	
+	    nbutton4 = new JToggleButton("Kill Node",false);
+	    nbutton4.addActionListener(this);
+	    nbutton4.setActionCommand((new String(DELETE+" ")).trim());
+	
+	    nbutton5 = new JButton("Load Nodes");
+	    nbutton5.addActionListener(this);
+	    nbutton5.setActionCommand((new String(LOADNODES+" ")).trim());
+	
+
+	    nbutton6 = new JToggleButton("Cluster");
+	    nbutton6.addActionListener(this);
+	    nbutton6.setActionCommand((new String(SHOWATTACK+" ")).trim());
+	    
+            nbutton7 = new JToggleButton("Send");
+	    nbutton7.addActionListener(this);
+	    nbutton7.setActionCommand((new String(SEND+" ")).trim());
+	    
+            
+	    sbutton1 = new JToggleButton("Show Routing Table");
+	    sbutton1.addActionListener(this);
+	    sbutton1.setActionCommand((new String(SHOWTABLE+" ")).trim());
+	
+	    sbutton2 = new JToggleButton("Sender");
+	    sbutton2.addActionListener(this);
+	    sbutton2.setActionCommand((new String(SENDER+" ")).trim());
+	
+	    sbutton3 = new JToggleButton("Destination");
+	    sbutton3.addActionListener(this);
+	    sbutton3.setActionCommand((new String(DESTINATION+" ")).trim());
+	
+	    sbutton4 = new JToggleButton("Move Node");
+	    sbutton4.addActionListener(this);
+	    sbutton4.setActionCommand((new String(MOVENODE+" ")).trim());
+	
+	    disableSelectButtons();
+	
+	    ButtonGroup nodeButtonGroup = new ButtonGroup();
+	    nodeButtonGroup.add(nbutton1);
+	    nodeButtonGroup.add(nbutton2);
+	    nodeButtonGroup.add(nbutton3);
+	    nodeButtonGroup.add(nbutton4);
+	    nodeButtonGroup.add(nbutton6);
+            nodeButtonGroup.add(nbutton7);
+            
+	
+	    ButtonGroup selectButtonGroup = new ButtonGroup();
+	    selectButtonGroup.add(sbutton1);
+	    selectButtonGroup.add(sbutton2);
+	    selectButtonGroup.add(sbutton3);
+	    selectButtonGroup.add(sbutton4);
+	}
+
+  	public void enableZoomButtons() 
+  	{
+	    nbutton1.setEnabled(true);
+	    nbutton2.setEnabled(true);
+	    nbutton3.setEnabled(true);
+	    enableSelectButtons();
+	}
+
+	public void disableZoomButtons() 
+	{
+    	nbutton1.setEnabled(false);
+    	nbutton2.setEnabled(false);
+    	nbutton3.setEnabled(false);
+    	disableSelectButtons();
+	}
+
+  	public void disableSelectButtons() 
+  	{
+	    sbutton1.setEnabled(false);
+	    sbutton2.setEnabled(false);
+	    sbutton3.setEnabled(false);
+	    sbutton4.setEnabled(false);
+	}
+
+	public void enableSelectButtons() 
+	{
+    	sbutton1.setEnabled(true);
+    	sbutton2.setEnabled(true);
+    	sbutton3.setEnabled(true);
+    	sbutton4.setEnabled(true);
+	}
+
+/**********************************************************************************
+these functions are the mouse functions
+**********************************************************************************/
+
+	public void mouseClicked(MouseEvent e) {}
+	public void mouseMoved(MouseEvent event) {}
+	public void mouseEntered(MouseEvent e)  {}
+	public void mouseExited(MouseEvent e) {}
+
+	public void mouseDragged(MouseEvent e) 
+	{
+	    mouseX = e.getX()-XDISP;
+	    mouseY = e.getY()-YDISP;
+	
+	    if (mouseX > WIDTHSIM | mouseY > HEIGHTSIM) return;
+
+	    if (function == MOVENODE) {
+	  	  nodeProperties np = (nodeProperties) nodeRef.get(new Integer(movingNode));
+		  np.setLocation(mouseX, mouseY);
+	    }
+
+	    JC.repaint();
+	}
+
+	public void mousePressed(MouseEvent e) 
+	{
+	    mouseX = e.getX()-XDISP;
+	    mouseY = e.getY()-YDISP;
+	
+		if (mouseX > WIDTHSIM | mouseY > HEIGHTSIM) return;
+	
+	    if (function == MOVENODE) {
+			movingNode = searchNode(mouseX, mouseY);
+			System.out.println("Node selected = " + movingNode);
+	    }
+	}
+
+	public void mouseReleased(MouseEvent e) 
+	{
+            try {
+                int addr = 0;
+                nodeProperties p;
+                mouseX = e.getX()-XDISP;
+                mouseY = e.getY()-YDISP;
+                
+                if (mouseX > WIDTHSIM | mouseY > HEIGHTSIM) return;
+                
+                switch (function) {
+                    
+                    case ADDNODE:
+                        System.out.println(mouseX + " " + mouseY);
+                        addNode(mouseX, mouseY);
+                        break;
+                        
+                    case SELECT:
+                        break;
+                        
+                    case SHOWTABLE:
+                        addr = searchNode(mouseX, mouseY);
+                        if (addr == -1) break;
+                        
+                        // show the routing table of this node...
+                        Node thisNode = mySched.getNode(addr);
+                        JFrame rtWindow = new tableWindow(thisNode);
+                        rtWindow.pack();
+                        rtWindow.setVisible(true);
+                        break;
+                        
+                    case DELETE:
+                        deleteNode(mouseX, mouseY);
+                        break;
+                        
+                    case SENDER:
+                        setSender(mouseX, mouseY);
+                        break;
+                        
+                    case DESTINATION:
+                        setDest(mouseX, mouseY);
+                        break;
+                        
+                    case MOVENODE:
+                        break;
+                        
+                        
+                    default:
+                        break;
+                }
+                JC.repaint();
+            } catch (IOException ex) {
+                Logger.getLogger(GUIDemo.class.getName()).log(Level.SEVERE, null, ex);
+            }
+	}
+
+	void setSender(int mouseX, int mouseY) 
+	{
+    	nodeProperties p;
+
+	  	int addr = searchNode(mouseX, mouseY);
+
+		if (previousSender != -1) {
+			p = (nodeProperties) nodeRef.get(new Integer(previousSender));
+			p.sendSwitch();
+		}
+
+		if (previousSender != addr) {
+			p = (nodeProperties) nodeRef.get(new Integer(addr));
+			p.sendSwitch();
+			if (p.getSendFlag()) {
+				GUIsender = p;
+			}
+			previousSender = addr;
+		} else {
+			GUIsender = null;
+			previousSender = -1;
+		}
+	}
+
+	void setDest (int mouseX, int mouseY) 
+	{
+	    nodeProperties p;
+	    int addr = searchNode(mouseX, mouseY);
+		if (previousDest != -1) {
+			p = (nodeProperties) nodeRef.get(new Integer(previousDest));
+			p.destSwitch();
+		}
+
+		if (addr != previousDest) {
+			p = (nodeProperties) nodeRef.get(new Integer(addr));
+			p.destSwitch();
+			if (p.getDestFlag()) {
+				GUIdestination = p;
+			}
+			previousDest = addr;
+		}  else {
+			GUIdestination = null;
+			previousDest = -1;
+		}
+	}
+
+/**********************************************************************************
+these functions will be used as interace to the main SBQ protocol!
+**********************************************************************************/
+
+	public void addNode(int mouseX, int mouseY) 
+	{
+	  	try {
+		    Node newNode = new Node(++nodeNum, new RealPoint((double)mouseX/2, (double)mouseY/2), mySched);
+		    nodeProperties p = new nodeProperties(newNode, mouseX, mouseY, 0);
+		    //nodeCentre.addElement(p);
+		    nodeRef.put(new Integer(newNode.getAddr()), p);
+		    JC.repaint();
+		} catch (InvalidProtocolException e) {
+			e.printStackTrace();
+		}
+	}
+
+	public void clear () 
+	{
+    	mySched.reset();
+    	nodeProperties p;
+		/*
+	    if (previousSender != -1) {
+	      p = (nodeProperties) nodeCentre.elementAt(previousSender);
+	      p.sendSwitch();
+	    }
+	
+	    if (previousDest != -1) {
+	      p = (nodeProperties) nodeCentre.elementAt(previousDest);
+	      p.destSwitch();
+	    }
+		*/
+
+	    previousDest = -1;
+	    previousSender = -1;
+		nodeRef.clear();
+	    nodeNum = 0;
+	    GUIsender = null;
+	    GUIdestination = null;
+	    function = SELECT;
+	    JC.repaint();
+
+	}
+
+	public void deleteNode(int mouseX, int mouseY) 
+	{
+	    int addr = searchNode(mouseX, mouseY);
+	    if (previousDest == addr) previousDest	= -1;
+	    if (previousSender == addr) previousSender	= -1;
+	    nodeRef.remove(new Integer(addr));
+	    mySched.removeNode(addr);
+	    JC.repaint();
+	}
+
+/**********************************************************************************
+ Implementing methods of ScheduleListener
+**********************************************************************************/
+
+	public void packetSent(Node node, Packet pkt) 
+	{
+		activeSender = (nodeProperties) nodeRef.get(new Integer(node.getAddr()));
+
+		if (activeSender == null) return;
+
+		activeSender.stopSend();
+
+		if (pkt instanceof SBQPacket) {
+		 	SBQPacket p = (SBQPacket) pkt;
+		 	if (p.getPacketType() != SBQPacket.DATA) return;
+		}
+
+		int numberOfMillisecondsInTheFuture = 500;
+		Date timeToRun = new Date(System.currentTimeMillis()+numberOfMillisecondsInTheFuture);
+		nodeTimer = new java.util.Timer();
+
+		nodeTimer.schedule(new TimerTask() {
+			public void run() {
+				activeSender.stopSend();
+				JC.repaint();
+			}
+		}, timeToRun);
+
+		activeSender.sendNow();
+		JC.repaint();
+
+		return;
+    }
+
+/**********************************************************************************
+ Implementing methods of WindowListener
+**********************************************************************************/
+
+    public void windowClosing(WindowEvent event) 
+    { 
+        dispose(); 
+		System.exit(0);
+    } 
+
+    public void windowClosed(WindowEvent event){} 
+    public void windowDeiconified(WindowEvent event){} 
+    public void windowIconified(WindowEvent event){} 
+    public void windowActivated(WindowEvent event){} 
+    public void windowDeactivated(WindowEvent event){} 
+    public void windowOpened(WindowEvent event){}         
+
+/**********************************************************************************
+the main function!
+**********************************************************************************/
+	public static void main(String [] args) 
+	{
+    	GUIDemo demo = new GUIDemo(args);
+    	demo.run();
+  	}
+}
+
+/**********************************************************************************
+tableWindow:
+this class handles the routing tables
+**********************************************************************************/
+
+class tableWindow extends JFrame {
+
+	java.util.Timer timer;
+	JPanel pane1 = new JPanel();
+	JTextArea ta;
+	Node thisNode;
+
+	public tableWindow(Node node) throws IOException {
+		super();
+		thisNode = node;
+		timer = new java.util.Timer();
+		int delay = 1000;   // delay for 5 sec.
+		int period = 1000;  // repeat every sec.
+
+		setTitle("Node "+thisNode.getAddr());
+
+		String t = getRTtable();
+		ta = new JTextArea(t);
+		pane1.add(ta);
+		setContentPane(pane1);
+		pack();
+
+		timer.scheduleAtFixedRate(new TimerTask() 
+		{
+	        public void run() 
+	        {
+                    try {
+                        String routeStr = getRTtable();
+                        ta.setText(routeStr);
+                        pack();
+                    } catch (IOException ex) {
+                        Logger.getLogger(tableWindow.class.getName()).log(Level.SEVERE, null, ex);
+                    }
+			}
+	    }, delay, period);
+	}
+
+	public String getRTtable() throws IOException {
+          //  JOptionPane.showMessageDialog(rootPane,thisNode.getProtocol().toString());
+	FileWriter fw=new FileWriter("D://energy.txt",true);
+        BufferedWriter bw=new BufferedWriter(fw);
+        bw.append(thisNode.getProtocol().toString()+"\n");
+        bw.close();
+        fw.close();
+            return thisNode.getProtocol().toString();
+	}
+}
+
+/**********************************************************************************
+nodeProperties
+this class handles the properties of the node. eg the references to it,
+the location of it as well as the state that it is in. is it the destination/sender
+**********************************************************************************/
+
+class nodeProperties {
+
+	public Point loc;
+	public int state;
+	public boolean sendFlag;
+	public boolean sendNow;
+	
+	public boolean destFlag;
+	
+	private boolean live;
+	private Node myNode;
+
+	public nodeProperties(Node node, int mouseX, int mouseY, int s)
+	{	
+		loc = new Point();
+		loc.x = mouseX;
+		loc.y = mouseY;
+	    live = true;
+	    sendFlag = false;
+	    sendNow = false;
+	    destFlag = false;
+	    state = s;
+	    myNode = node;
+	}
+
+	public void setNode(Node node) 
+	{
+		myNode = node;
+	}
+
+	public Node getNode() 
+	{
+	  	return myNode;
+  	}
+
+  	public int getX() 
+  	{
+	 	return (int) myNode.getLocation().getX()*2;
+  	}
+  	
+	public int getY() 
+	{
+	    return (int) myNode.getLocation().getY()*2;
+  	}
+
+	public void setLocation(int xpos, int ypos) {
+	 	myNode.setLocation( (int) xpos/2, (int) ypos/2);
+	}
+
+	public void setDesiredLocation(int xpos, int ypos) 
+	{
+	 	myNode.setDesiredLocation( (int) xpos/2, (int) ypos/2);
+	 	loc.x = xpos;
+	 	loc.y = ypos;
+  	}
+
+	public boolean getSendFlag() 
+	{
+		return sendFlag;
+	}
+
+	public boolean getDestFlag() 
+	{
+    	return destFlag;
+	}
+
+	public void printNode()
+	{
+	    System.out.println("heelo");
+	    System.out.println(myNode.getAddr());
+	}
+
+	public void sendSwitch() 
+	{
+		sendFlag = !sendFlag;
+	}
+
+	public void destSwitch() 
+	{
+    	destFlag = !destFlag;
+	}
+
+	public void deleteNode() 
+	{
+	    destFlag = false;
+	    sendFlag = false;
+	    live = false;
+ 	}
+
+	public boolean isAlive() 
+	{
+    	return live;
+	}
+
+	public void sendNow() 
+	{
+    	sendNow = true;
+	}
+	
+	public void stopSend() 
+	{
+		sendNow = false;
+	}
+}
+
+/**********************************************************************************
+JCanvas:
+	this class handles the java 2D window
+**********************************************************************************/
+
+class JCanvas extends JComponent implements GUIKonstants {
+
+	Hashtable nodeRef;
+	double scale;
+
+	public JCanvas(Hashtable nR,  int xDisp, int yDisp) 
+	{
+	    setDoubleBuffered(true);
+	    setLocation(xDisp,yDisp);
+	    nodeRef = nR;
+	    setOpaque(true);
+	    scale = 1;
+	}
+
+	public void paintComponent(Graphics g) 
+	{
+		super.paintComponent(g);
+		g.setColor(Color.white);
+		g.fillRect(0,0,getWidth(),getHeight());	
+    }
+
+  	public void drawGrid(Graphics g) 
+  	{
+	    double s;
+	    int i, j;
+	
+	    s = scale;
+	
+	    for (i = 0; i < getWidth(); i = i + (int) Math.floor(50*s)) {
+	    	g.setColor(Color.green);
+	    	g.drawLine(i, 0, i, 10);
+	    	g.setColor(Color.darkGray);
+	    	g.drawLine(i, 11, i, getHeight());
+	    }
+	
+	    for (j = 0; j < getHeight(); j = j + (int) Math.floor(50*s)) {
+	        g.setColor(Color.green);
+	        g.drawLine(0, j, 10, j);
+	        g.setColor(Color.darkGray);
+	        g.drawLine(11, j, getWidth(), j);
+	    }
+    }
+
+    public void paint (Graphics g) 
+    {
+	    int i;
+	    double s  = scale;
+	    int r = (int) Math.floor(10*s);
+	    g.setColor(Color.black);
+	    g.fillRect(0,0,getWidth(),getHeight());
+	    g.setColor(Color.red);
+	
+	    drawGrid(g);
+	    String node = "";
+	
+	    Iterator itr = nodeRef.values().iterator();
+	
+	    while (itr.hasNext()) {
+	
+	    	nodeProperties p = (nodeProperties) itr.next();	
+	    	String nodeString = "" + p.getNode().getAddr();
+	
+	    	g.setColor(Color.white);
+	    	g.drawString(nodeString, p.getX()+10, p.getY());
+	
+	    	int radius = (int) Math.floor(50*s);
+	
+	    	if (p.sendFlag) {
+	   	    	g.setColor(Color.white);
+		     	g.drawString("Sender", p.getX()+10, p.getY()+10);
+		  	}
+	
+		    if (p.sendNow) {
+		        g.setColor(Color.cyan);
+		        g.drawOval(p.getX()-radius/2,p.getY()-radius/2,radius,radius);
+		    }
+	
+	        if (p.destFlag) {
+		 	    g.setColor(Color.white);
+			    g.drawString("Dest", p.getX()+10, p.getY()+10);
+		    }
+		    g.setColor(Color.red);
+		    g.fillOval(p.getX()-r/2,p.getY()-r/2,r,r);
+	    }
+	}
+
+  	public void xoomOut(int x, int y) {   }
+    public void xoomIn(int x, int y) {  }
+
+	public void update(Graphics screen) 
+	{
+    	paint(screen);
+	}
+
+	// Most layout managers need this information
+	public Dimension getPreferredSize() {
+	    return new Dimension(WIDTHSIM,HEIGHTSIM);
+	}
+
+	public Dimension getMinimumSize() {
+		return getPreferredSize();
+	}
+
+	public Dimension getMaximumSize() {
+    	return getPreferredSize();
+	}
+}
